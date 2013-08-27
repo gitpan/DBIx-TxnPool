@@ -4,13 +4,14 @@ use warnings;
 use inc::Module::Install;
 
 name 'DBIx-TxnPool';
-abstract 'The pool for making SQL insert/delete/updates more quickly by transaction method';
+abstract 'The helper for making SQL insert/delete/update statements through a transaction method with a deadlock solution';
 
 author 'Perlover <perlover@perlover.com>';
+license 'perl';
 version_from 'lib/DBIx/TxnPool.pm';
+
 auto_set_repository;
 author_tests('xt');
-license 'perl';
 
 WriteAll();
 

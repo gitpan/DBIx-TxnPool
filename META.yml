@@ -1,5 +1,5 @@
 ---
-abstract: 'The pool for making SQL insert/delete/updates more quickly by transaction method'
+abstract: 'The helper for making SQL insert/delete/update statements through a transaction method with a deadlock solution'
 author:
   - 'Perlover <perlover@perlover.com>'
 build_requires:
@@ -22,4 +22,4 @@ no_index:
 resources:
   license: http://dev.perl.org/licenses/
   repository: git://github.com/Perlover/DBIx-TxnPool.git
-version: 0.01
+version: 0.02

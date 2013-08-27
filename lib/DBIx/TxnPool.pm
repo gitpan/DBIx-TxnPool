@@ -6,7 +6,7 @@ use Exporter 5.57 qw( import );
 
 use Try::Tiny;
 
-our $VERSION = 0.01;
+our $VERSION = 0.02;
 our @EXPORT = qw( txn_item txn_post_item );
 
 sub new {
@@ -156,8 +156,7 @@ __END__
 
 =head1 NAME
 
-DBIx::TxnPool - The easy pool for making SQL insert/delete/updates statements
-more quickly by transaction method
+DBIx::TxnPool - The helper for making SQL insert/delete/update statements through a transaction method with a deadlock solution
 
 =head1 SYNOPSIS
 
@@ -287,8 +286,6 @@ itself.
 =head1 TODO
 
 =over
-
-=item To add doc for max_repeated_deadlocks
 
 =item A supporting DBIx::Connector object instead DBI
 

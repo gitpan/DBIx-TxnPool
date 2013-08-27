@@ -1,6 +1,6 @@
 NAME
-    DBIx::TxnPool - The easy pool for making SQL insert/delete/updates
-    statements more quickly by transaction method
+    DBIx::TxnPool - The helper for making SQL insert/delete/update
+    statements through a transaction method with a deadlock solution
 
 SYNOPSIS
         use DBIx::TxnPool;
@@ -106,7 +106,6 @@ LICENSE
     Perl itself.
 
 TODO
-    To add doc for max_repeated_deadlocks
     A supporting DBIx::Connector object instead DBI
     To make a DESTROY method - the alias for "finish" method.
 
