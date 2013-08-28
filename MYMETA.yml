@@ -18,8 +18,9 @@ no_index:
     - inc
     - t
     - xt
-requires: {}
+requires:
+  Try::Tiny: 0
 resources:
   license: http://dev.perl.org/licenses/
   repository: git://github.com/Perlover/DBIx-TxnPool.git
-version: 0.02
+version: 0.03

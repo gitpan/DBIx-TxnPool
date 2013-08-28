@@ -6,7 +6,7 @@ use Exporter 5.57 qw( import );
 
 use Try::Tiny;
 
-our $VERSION = 0.02;
+our $VERSION = 0.03;
 our @EXPORT = qw( txn_item txn_post_item );
 
 sub new {
@@ -253,7 +253,7 @@ The size of pool when a commit method will be called when feeding reaches the sa
 =item max_repeated_deadlocks B<(Optional)>
 
 The limit of consecutive deadlocks. The default is 5. After limit to be reached
-the L<add> throws exception.
+the L</add> throws exception.
 
 =back
 
@@ -272,6 +272,10 @@ be less than your defined size!
 
 It makes a final transaction if pool is not empty.
 
+=item amount_deadlocks
+
+The amount of deadlocks (repeated transactions)
+
 =back
 
 =head1 AUTHOR
@@ -282,6 +286,10 @@ This module has been written by Perlover <perlover@perlover.com>
 
 This module is free software and is published under the same terms as Perl
 itself.
+
+=head1 SEE ALSO
+
+L<DBI>, L<Deadlock Detection and Rollback|http://dev.mysql.com/doc/refman/5.5/en/innodb-deadlock-detection.html>
 
 =head1 TODO
 

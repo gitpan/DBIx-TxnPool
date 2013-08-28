@@ -10,6 +10,8 @@ author 'Perlover <perlover@perlover.com>';
 license 'perl';
 version_from 'lib/DBIx/TxnPool.pm';
 
+requires 'Try::Tiny';
+
 auto_set_repository;
 author_tests('xt');
 

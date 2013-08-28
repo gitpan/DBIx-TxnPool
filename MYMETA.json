@@ -32,7 +32,9 @@
          }
       },
       "runtime" : {
-         "requires" : {}
+         "requires" : {
+            "Try::Tiny" : 0
+         }
       }
    },
    "release_status" : "stable",
@@ -45,5 +47,5 @@
          "url" : "git://github.com/Perlover/DBIx-TxnPool.git"
       }
    },
-   "version" : "0.02"
+   "version" : "0.03"
 }

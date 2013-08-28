@@ -87,7 +87,7 @@ CONSTRUCTOR
 
     max_repeated_deadlocks (Optional)
         The limit of consecutive deadlocks. The default is 5. After limit to
-        be reached the add throws exception.
+        be reached the "add" throws exception.
 
 METHODS
     add You can add item of data to the pool. This method makes a wrap to
@@ -98,12 +98,19 @@ METHODS
     finish
         It makes a final transaction if pool is not empty.
 
+    amount_deadlocks
+        The amount of deadlocks (repeated transactions)
+
 AUTHOR
     This module has been written by Perlover <perlover@perlover.com>
 
 LICENSE
     This module is free software and is published under the same terms as
     Perl itself.
+
+SEE ALSO
+    DBI, Deadlock Detection and Rollback
+    <http://dev.mysql.com/doc/refman/5.5/en/innodb-deadlock-detection.html>
 
 TODO
     A supporting DBIx::Connector object instead DBI
