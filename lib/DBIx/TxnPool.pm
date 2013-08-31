@@ -6,47 +6,49 @@ use Exporter 5.57 qw( import );
 
 use Try::Tiny;
 
-our $VERSION = 0.03;
-our @EXPORT = qw( txn_item txn_post_item );
+our $VERSION = 0.04;
+our @EXPORT = qw( txn_item txn_post_item txn_commit );
 
 sub new {
     my ( $class, %args ) = @_;
 
-    my $self = bless {
-        size                    => $args{size} || 100,
-        dbh                     => $args{dbh} || die( __PACKAGE__ . ": the dbh should be defined" ),
-        max_repeated_deadlocks  => $args{max_repeated_deadlocks} || 5,
-    }, ref $class || $class;
+    die( __PACKAGE__ . ": the dbh should be defined" )
+      unless $args{dbh};
 
-    $self->{pool} = [];
-    $self->{amount_deadlocks} = 0;
+    $args{size}                   ||= 100;
+    $args{max_repeated_deadlocks} ||= 5;
+    $args{pool}                   = [];
+    $args{amount_deadlocks}       = 0;
 
-    $self;
+    bless \%args, ref $class || $class;
+}
+
+sub DESTROY {
+    $_[0]->finish;
 }
 
 sub txn_item (&@) {
-    my ( $callback, @args ) = @_;
-
-    my ( $post_callback );
-
-    if ( ref $args[0] eq 'HASH' ) {
-        # If there is txn_post_item after txn_item
-        $post_callback = $args[0]->{post_callback};
-        @args = @{ $args[0]->{args} };
-    }
-
-    my $self                    = __PACKAGE__->new( @args );
-    $self->{item_callback}      = $callback;
-    $self->{post_item_callback} = $post_callback;
-
-    $self;
+    __PACKAGE__->new( %{ __make_chain( 'item_callback', @_ ) } );
 }
 
 sub txn_post_item (&@) {
-    my ( $callback, @args ) = @_;
-
-    return { post_callback => $callback, args => [ @args ] }
+    __make_chain( 'post_item_callback', @_ );
 }
+
+sub txn_commit (&@) {
+    __make_chain( 'commit_callback', @_ );
+}
+
+sub __make_chain {
+    my $cb_name = shift;
+    my $cb_func = shift;
+    my $ret;
+
+    ( $ret = ref $_[0] eq 'HASH' ? $_[0] : { @_ } )->{ $cb_name } = $cb_func;
+    $ret;
+}
+
+sub dbh { $_[0]->{dbh} }
 
 sub add {
     my ( $self, $data ) = @_;
@@ -58,7 +60,7 @@ sub add {
         $self->start_txn;
 
         local $_ = $data;
-        $self->{item_callback}->( $data );
+        $self->{item_callback}->( $self, $data );
     }
     catch {
         $self->rollback_txn;
@@ -83,7 +85,7 @@ sub repeat_again {
     try {
         foreach my $data ( @{ $self->{pool} } ) {
             local $_ = $data;
-            $self->{item_callback}->( $data );
+            $self->{item_callback}->( $self, $data );
         }
     }
     catch {
@@ -109,10 +111,10 @@ sub finish {
     $self->{repeated_deadlocks} = 0;
     $self->commit_txn;
 
-    if ( $self->{post_item_callback} ) {
+    if ( exists $self->{post_item_callback} ) {
         foreach my $data ( @{ $self->{pool} } ) {
             local $_ = $data;
-            $self->{post_item_callback}->( $data );
+            $self->{post_item_callback}->( $self, $data );
         }
     }
 
@@ -142,6 +144,8 @@ sub commit_txn {
 
     if ( $self->{in_txn} ) {
         $self->{dbh}->commit or die $self->{dbh}->errstr;
+        $self->{commit_callback}->( $self )
+          if exists $self->{commit_callback};
         $self->{in_txn} = undef;
     }
 }
@@ -201,14 +205,27 @@ deleting files, cleanups and etc.
 The object DBIx::TxnPool created by txn_item subroutines:
 
     my $pool = txn_item {
-        # $_ consists the one item
-        # code has dbh & sth handle statements
+        my ( $pool, $item ) = @_;
+        # $_ consists the item too
+
         # It's executed for every item inside one transaction maximum of size 'size'
         # this code may be recalled if deadlocks will occur
+
+        # code has dbh & sth handle statements
+        $pool->dbh->do("UPDATE ...");
+        $pool->dbh->do("INSERT ...");
+        $pool->dbh->do("DELETE...");
     }
     txn_post_item {
-        # $_ consists the one item
+        my ( $pool, $item ) = @_;
+        # $_ consists the item too
         # code executed for every item after sucessfully commited transaction
+        unlink('some_file);
+    }
+    txn_commit {
+        my $pool = shift;
+        # we log here each transaction for example
+        log( 'The commit was here...' );
     } dbh => $dbh, size => 100;
 
 Or other way:
@@ -222,19 +239,29 @@ Or other way:
 
 =head2 Shortcuts:
 
+The C<txn_item> should be first. Other sortcuts can follow in any order.
+Parameters should be the last.
+
 =over
 
 =item txn_item B<(Required)>
 
 The transaction's item callback. Here should be SQL statements and code should
 be safe for repeating (when a deadlock occurs). The C<$_> consists a current item.
-You can modify it if one is hashref for example.
+You can modify it if one is hashref for example. Passing arguments will be
+I<DBIx::TxnPool> object and I<current item> respectively.
 
 =item txn_post_item B<(Optional)>
 
 The post transaction item callback. This code will be executed once for each
 item (defined in C<$_>). It is located outside of the transaction. And it will
-be called if whole transaction was succaessful.
+be called if whole transaction was succaessful. Passing arguments will be
+I<DBIx::TxnPool> object and I<current item> respectively.
+
+=item txn_commit B<(Optional)>
+
+This callback will be called after each SQL commit statement. Here you can put
+code for logging for example.
 
 =back
 
@@ -268,6 +295,10 @@ It can finish transaction if pool reaches up to size or can repeat a whole
 transaction again if deadlock exception was thrown. The size of transaction may
 be less than your defined size!
 
+=item dbh
+
+The accessor of C<dbh>. It's readonly.
+
 =item finish
 
 It makes a final transaction if pool is not empty.
@@ -297,7 +328,7 @@ L<DBI>, L<Deadlock Detection and Rollback|http://dev.mysql.com/doc/refman/5.5/en
 
 =item A supporting DBIx::Connector object instead DBI
 
-=item To make a DESTROY method - the alias for C<finish> method.
+=item To add other callbacks in future.
 
 =back
 

@@ -44,14 +44,27 @@ CONSTRUCTOR
     The object DBIx::TxnPool created by txn_item subroutines:
 
         my $pool = txn_item {
-            # $_ consists the one item
-            # code has dbh & sth handle statements
+            my ( $pool, $item ) = @_;
+            # $_ consists the item too
+
             # It's executed for every item inside one transaction maximum of size 'size'
             # this code may be recalled if deadlocks will occur
+
+            # code has dbh & sth handle statements
+            $pool->dbh->do("UPDATE ...");
+            $pool->dbh->do("INSERT ...");
+            $pool->dbh->do("DELETE...");
         }
         txn_post_item {
-            # $_ consists the one item
+            my ( $pool, $item ) = @_;
+            # $_ consists the item too
             # code executed for every item after sucessfully commited transaction
+            unlink('some_file);
+        }
+        txn_commit {
+            my $pool = shift;
+            # we log here each transaction for example
+            log( 'The commit was here...' );
         } dbh => $dbh, size => 100;
 
     Or other way:
@@ -64,17 +77,26 @@ CONSTRUCTOR
         } dbh => $dbh, size => 100;
 
   Shortcuts:
+    The "txn_item" should be first. Other sortcuts can follow in any order.
+    Parameters should be the last.
+
     txn_item (Required)
         The transaction's item callback. Here should be SQL statements and
         code should be safe for repeating (when a deadlock occurs). The $_
         consists a current item. You can modify it if one is hashref for
-        example.
+        example. Passing arguments will be *DBIx::TxnPool* object and
+        *current item* respectively.
 
     txn_post_item (Optional)
         The post transaction item callback. This code will be executed once
         for each item (defined in $_). It is located outside of the
         transaction. And it will be called if whole transaction was
-        succaessful.
+        succaessful. Passing arguments will be *DBIx::TxnPool* object and
+        *current item* respectively.
+
+    txn_commit (Optional)
+        This callback will be called after each SQL commit statement. Here
+        you can put code for logging for example.
 
   Parameters:
     dbh (Required)
@@ -95,6 +117,8 @@ METHODS
         can repeat a whole transaction again if deadlock exception was
         thrown. The size of transaction may be less than your defined size!
 
+    dbh The accessor of "dbh". It's readonly.
+
     finish
         It makes a final transaction if pool is not empty.
 
@@ -114,5 +138,5 @@ SEE ALSO
 
 TODO
     A supporting DBIx::Connector object instead DBI
-    To make a DESTROY method - the alias for "finish" method.
+    To add other callbacks in future.
 

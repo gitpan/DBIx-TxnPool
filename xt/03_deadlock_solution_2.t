@@ -1,4 +1,4 @@
-# This test is same as 02_deadlock_solution.t only without txn_post_item cause
+# This test is same as 02_deadlock_solution.t only without txn_post_item cause but with txn_commit_callback
 use strict;
 use warnings;
 
@@ -7,7 +7,7 @@ use lib 'xt';
 BEGIN { $Test::MultiFork::inactivity = 10 }
 
 use Test::MultiFork;
-use Test::More tests => 2;
+use Test::More tests => 3;
 
 use constant    AMOUNT_TESTS => 300;
 
@@ -37,8 +37,13 @@ b:
     ok( $dbh->selectrow_array( "SELECT COUNT(*) FROM $table" ) == 10 );
 
 ab:
+    my $commit_callbacks = 0;
+
     $pool = txn_item {
         $dbh->do( "UPDATE $table SET b=? WHERE a=?", undef, $_->{b}, $_->{a} );
+    }
+    txn_commit {
+        $commit_callbacks++;
     } dbh => $dbh;
 
 a:
@@ -57,4 +62,5 @@ ab:
 
 ab:
     diag "The amount deadlocks is " . $pool->amount_deadlocks;
+    ok( $commit_callbacks == AMOUNT_TESTS );
     done_testing;

@@ -1,3 +1,9 @@
+0.04 (2013-08-31)
+    +) Added 'txn_commit' shortcut as 'commit' callback
+    *) Some code improvements
+    +) Added 'dbh' accessor
+    +) All callbacks now get a $pool object and may be $item as second argument
+
 0.03 (2013-08-28)
     *) Some doc fixes
 
