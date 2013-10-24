@@ -96,7 +96,8 @@ CONSTRUCTOR
 
     txn_commit (Optional)
         This callback will be called after each SQL commit statement. Here
-        you can put code for logging for example.
+        you can put code for logging for example. The first argument will be
+        *DBIx::TxnPool* object
 
   Parameters:
     dbh (Required)

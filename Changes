@@ -1,14 +1,19 @@
-0.04 (2013-08-31)
-    +) Added 'txn_commit' shortcut as 'commit' callback
-    *) Some code improvements
-    +) Added 'dbh' accessor
-    +) All callbacks now get a $pool object and may be $item as second argument
+Revision history for perl module DBIx::TxnPool
 
-0.03 (2013-08-28)
-    *) Some doc fixes
+0.05 2013-10-24
+    - Removed MYMETA.* files from MANIFEST and added to exclude lists (.gitignore & MANIFEST.SKIP)
 
-0.02 (2013-08-27)
-    *) Some fixes
+0.04 2013-08-31
+    - Added 'txn_commit' shortcut as 'commit' callback
+    - Some code improvements
+    - Added 'dbh' accessor
+    - All callbacks now get a $pool object and may be $item as second argument
 
-0.01
-    *) Final release for CPAN
+0.03 2013-08-28
+    - Some doc fixes
+
+0.02 2013-08-27
+    - Some fixes
+
+0.01 2013-08-27
+    - Final release for CPAN

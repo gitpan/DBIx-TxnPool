@@ -6,7 +6,7 @@ use Exporter 5.57 qw( import );
 
 use Try::Tiny;
 
-our $VERSION = 0.04;
+our $VERSION = 0.05;
 our @EXPORT = qw( txn_item txn_post_item txn_commit );
 
 sub new {
@@ -261,7 +261,7 @@ I<DBIx::TxnPool> object and I<current item> respectively.
 =item txn_commit B<(Optional)>
 
 This callback will be called after each SQL commit statement. Here you can put
-code for logging for example.
+code for logging for example. The first argument will be I<DBIx::TxnPool> object
 
 =back
 
