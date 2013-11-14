@@ -6,7 +6,7 @@ use Exporter 5.57 qw( import );
 
 use Try::Tiny;
 
-our $VERSION = 0.05;
+our $VERSION = 0.06;
 our @EXPORT = qw( txn_item txn_post_item txn_commit );
 
 sub new {
@@ -65,7 +65,9 @@ sub add {
     catch {
         $self->rollback_txn;
 
-        /deadlock/io
+        # It's better to look for the "try restarting transaction" string
+        # because sometime may be happens other error: Lock wait timeout exceeded
+        /try restarting transaction/o
         ?
             ( $self->{amount_deadlocks}++, $self->repeat_again )
         :
@@ -91,7 +93,9 @@ sub repeat_again {
     catch {
         $self->rollback_txn;
 
-        /deadlock/io
+        # It's better to look for the "try restarting transaction" string
+        # because sometime may be happens other error: Lock wait timeout exceeded
+        /try restarting transaction/o
         ?
             (
                 $self->{amount_deadlocks}++, $self->{repeated_deadlocks} >= $self->{max_repeated_deadlocks}
