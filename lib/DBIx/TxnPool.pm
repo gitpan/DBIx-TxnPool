@@ -5,14 +5,15 @@ use warnings;
 use Exporter 5.57 qw( import );
 
 use Try::Tiny;
+use Carp;
 
-our $VERSION = 0.06;
+our $VERSION = 0.07;
 our @EXPORT = qw( txn_item txn_post_item txn_commit );
 
 sub new {
     my ( $class, %args ) = @_;
 
-    die( __PACKAGE__ . ": the dbh should be defined" )
+    croak( __PACKAGE__ . ": the dbh should be defined" )
       unless $args{dbh};
 
     $args{size}                   ||= 100;
@@ -71,7 +72,7 @@ sub add {
         ?
             ( $self->{amount_deadlocks}++, $self->repeat_again )
         :
-            die( __PACKAGE__ . ": error in item callback ($_)" );
+            croak( __PACKAGE__ . ": error in item callback ($_)" );
     };
 
     $self->finish
@@ -82,7 +83,7 @@ sub repeat_again {
     my $self = shift;
 
     $self->start_txn;
-    select( undef, undef, undef, 0.1 * ++$self->{repeated_deadlocks} );
+    select( undef, undef, undef, 0.5 * ++$self->{repeated_deadlocks} );
 
     try {
         foreach my $data ( @{ $self->{pool} } ) {
@@ -100,12 +101,12 @@ sub repeat_again {
             (
                 $self->{amount_deadlocks}++, $self->{repeated_deadlocks} >= $self->{max_repeated_deadlocks}
                 ?
-                    die( __PACKAGE__ . ": limit of deadlock resolvings" )
+                    croak( __PACKAGE__ . ": limit of deadlock resolvings" )
                 :
                     $self->repeat_again
             )
         :
-            die( __PACKAGE__ . ": error in item callback ($_)" );
+            croak( __PACKAGE__ . ": error in item callback ($_)" );
     };
 }
 

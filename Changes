@@ -1,5 +1,9 @@
 Revision history for perl module DBIx::TxnPool
 
+0.07 2013-11-27
+    - 'die' directives were been changed to 'croak' fot the better diagnostics
+    - Increased incremental delay for repeated deadlocks
+
 0.06 2013-11-14
     - Changed the searched string for deadlock conflicts in MySQL
       Now it's the string "try restarting transaction" because some time not only deadlocks occur but some other locks
