@@ -1,25 +1,50 @@
 NAME
-    DBIx::TxnPool - The helper for making SQL insert/delete/update
-    statements through a transaction method with a deadlock solution
+    DBIx::TxnPool - Auto resolver of MySQL InnoDB deadlocks and transaction
+    wrapper for DML statements
 
 SYNOPSIS
+    This module will help to you to make quickly DML statements of InnoDB
+    engine. You can forget about deadlocks ;-)
+
         use DBIx::TxnPool;
 
         my $pool = txn_item {
-            # $_ consists the one item
-            # code has dbh & sth handle statements
-            # It's executed for every item inside one transaction maximum of size 'size'
-            # this code may be recalled if deadlocks will occur
+            my ( $pool, $item ) = @_;
+
+            $pool->dbh->do( "UPDATE table SET val=? WHERE key=?", undef, $_->{val}, $_->{key} );
+            # or
+            $dbh->do("INSERT INTO table SET val=?, key=?", undef, $_->{val}, $_->{key} );
         }
         txn_post_item {
-            # $_ consists the one item
-            # code executed for every item after sucessfully commited transaction
+            my ( $pool, $item ) = @_;
+
+            # Here we are if transaction is successful
+            unlink( 'some_file_' . $_->{key} );
+            # or
+            unlink( 'some_file_' . $item->{key} );
+        }
+        txn_commit {
+            my $pool = shift;
+            log( 'The commit was here...' );
         } dbh => $dbh, size => 100;
 
-        foreach my $i ( 0 .. 1000 ) {
-            $pool->add( { i => $i, value => 'test' . $i } );
-        }
+        # Here can be deadlocks but they will be resolved by module and repeated (see example in xt/03_deadlock_solution.t)
+        $pool->add( { key => int( rand(100) ), val => $_ } ) for ( 0 .. 300 );
+        $pool->finish;
 
+    Or other way:
+
+        my $pool = txn_item {
+            $dbh->do( "UPDATE table SET val=? WHERE key=?", undef, $_->{val}, $_->{key} );
+        }
+        txn_sort {
+            $a->{key} <=> $b->{key}
+        }
+        dbh => $dbh, size => 100;
+
+        # Here will not be deadlocks because all keys are sorted before transaction and this example is sinple (see example in xt/04_deadlock_sort_solution.t)
+        # But module will resolve deadlocks in other difficult cases
+        $pool->add( { key => int( rand(100) ), val => $_ } ) for ( 0 .. 300 );
         $pool->finish;
 
 DESCRIPTION
@@ -41,40 +66,7 @@ DESCRIPTION
     example a deleting files, cleanups and etc.
 
 CONSTRUCTOR
-    The object DBIx::TxnPool created by txn_item subroutines:
-
-        my $pool = txn_item {
-            my ( $pool, $item ) = @_;
-            # $_ consists the item too
-
-            # It's executed for every item inside one transaction maximum of size 'size'
-            # this code may be recalled if deadlocks will occur
-
-            # code has dbh & sth handle statements
-            $pool->dbh->do("UPDATE ...");
-            $pool->dbh->do("INSERT ...");
-            $pool->dbh->do("DELETE...");
-        }
-        txn_post_item {
-            my ( $pool, $item ) = @_;
-            # $_ consists the item too
-            # code executed for every item after sucessfully commited transaction
-            unlink('some_file);
-        }
-        txn_commit {
-            my $pool = shift;
-            # we log here each transaction for example
-            log( 'The commit was here...' );
-        } dbh => $dbh, size => 100;
-
-    Or other way:
-
-        my $pool = txn_item {
-            # $_ consists the one item
-            # code has dbh & sth handle statements
-            # It's executed for every item inside one transaction maximum of size 'size'
-            # this code may be recalled if deadlocks will occur
-        } dbh => $dbh, size => 100;
+    Please to see "SYNOPSIS" section
 
   Shortcuts:
     The "txn_item" should be first. Other sortcuts can follow in any order.
@@ -86,6 +78,14 @@ CONSTRUCTOR
         consists a current item. You can modify it if one is hashref for
         example. Passing arguments will be *DBIx::TxnPool* object and
         *current item* respectively.
+
+    txn_sort (Optional)
+        Here you can define sort function for your data before transaction
+        will be made. If you have only one type SQL statement in "txn_item"
+        but have not sorted keys before transaction you can occur deadlocks
+        (they will be resolved and transaction will be repeated of course
+        but you will lose a processing time) unless you define this
+        function. This method minimize deadlock events.
 
     txn_post_item (Optional)
         The post transaction item callback. This code will be executed once

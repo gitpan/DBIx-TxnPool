@@ -4,10 +4,10 @@ use warnings;
 
 use lib 'xt';
 
-BEGIN { $Test::MultiFork::inactivity = 10 }
+BEGIN { $Test::MultiFork::inactivity = 120 }
 
 use Test::MultiFork;
-use Test::More tests => 3;
+use Test::More;
 
 use constant    AMOUNT_TESTS => 300;
 

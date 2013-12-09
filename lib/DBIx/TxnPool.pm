@@ -5,10 +5,14 @@ use warnings;
 use Exporter 5.57 qw( import );
 
 use Try::Tiny;
-use Carp;
+use Carp qw( confess croak );
 
-our $VERSION = 0.07;
-our @EXPORT = qw( txn_item txn_post_item txn_commit );
+our $VERSION = 0.08;
+our @EXPORT = qw( txn_item txn_post_item txn_commit txn_sort );
+
+# It's better to look for the "try restarting transaction" string
+# because sometime may be happens other error: Lock wait timeout exceeded
+use constant DEADLOCK_REGEXP    => qr/try restarting transaction/o;
 
 sub new {
     my ( $class, %args ) = @_;
@@ -40,6 +44,12 @@ sub txn_commit (&@) {
     __make_chain( 'commit_callback', @_ );
 }
 
+sub txn_sort (&@) {
+    my $ret = __make_chain( 'sort_callback', @_ );
+    $ret->{sort_callback_package} = caller;
+    $ret;
+}
+
 sub __make_chain {
     my $cb_name = shift;
     my $cb_func = shift;
@@ -58,28 +68,40 @@ sub add {
     try {
         push @{ $self->{pool} }, $data;
 
-        $self->start_txn;
+        if ( ! $self->{sort_callback} ) {
+            $self->start_txn;
 
-        local $_ = $data;
-        $self->{item_callback}->( $self, $data );
+            local $_ = $data;
+            $self->{item_callback}->( $self, $data );
+        }
     }
     catch {
-        $self->rollback_txn;
-
-        # It's better to look for the "try restarting transaction" string
-        # because sometime may be happens other error: Lock wait timeout exceeded
-        /try restarting transaction/o
-        ?
-            ( $self->{amount_deadlocks}++, $self->repeat_again )
-        :
-            croak( __PACKAGE__ . ": error in item callback ($_)" );
+        $self->_check_deadlock( $_ );
     };
 
     $self->finish
       if ( @{ $self->{pool} } >= $self->{size} );
 }
 
-sub repeat_again {
+sub _check_deadlock {
+    my ( $self, $error ) = @_;
+
+    $self->rollback_txn;
+
+    $error =~ DEADLOCK_REGEXP
+    ?
+        (
+            $self->{amount_deadlocks}++, $self->{repeated_deadlocks} >= $self->{max_repeated_deadlocks}
+            ?
+                confess( "limit ($self->{repeated_deadlocks}) of deadlock resolvings" )
+            :
+                $self->play_pool
+        )
+    :
+        confess( "error in item callback ($error)" );
+}
+
+sub play_pool {
     my $self = shift;
 
     $self->start_txn;
@@ -92,29 +114,30 @@ sub repeat_again {
         }
     }
     catch {
-        $self->rollback_txn;
-
-        # It's better to look for the "try restarting transaction" string
-        # because sometime may be happens other error: Lock wait timeout exceeded
-        /try restarting transaction/o
-        ?
-            (
-                $self->{amount_deadlocks}++, $self->{repeated_deadlocks} >= $self->{max_repeated_deadlocks}
-                ?
-                    croak( __PACKAGE__ . ": limit of deadlock resolvings" )
-                :
-                    $self->repeat_again
-            )
-        :
-            croak( __PACKAGE__ . ": error in item callback ($_)" );
+        $self->_check_deadlock( $_ );
     };
 }
 
 sub finish {
     my $self = shift;
 
-    $self->{repeated_deadlocks} = 0;
-    $self->commit_txn;
+    if ( $self->{sort_callback} && @{ $self->{pool} } ) {
+        no strict 'refs';
+        local *a = *{"$self->{sort_callback_package}\::a"};
+        local *b = *{"$self->{sort_callback_package}\::b"};
+
+        $self->{pool} = [ sort { $self->{sort_callback}->() } ( @{ $self->{pool} } ) ];
+
+        $self->play_pool;
+    }
+
+    try {
+        $self->{repeated_deadlocks} = 0;
+        $self->commit_txn;
+    }
+    catch {
+        $self->_check_deadlock( $_ );
+    };
 
     if ( exists $self->{post_item_callback} ) {
         foreach my $data ( @{ $self->{pool} } ) {
@@ -165,27 +188,51 @@ __END__
 
 =head1 NAME
 
-DBIx::TxnPool - The helper for making SQL insert/delete/update statements through a transaction method with a deadlock solution
+DBIx::TxnPool - Auto resolver of MySQL InnoDB deadlocks and transaction wrapper for DML statements
 
 =head1 SYNOPSIS
+
+This module will help to you to make quickly DML statements of InnoDB engine. You can forget about deadlocks ;-)
 
     use DBIx::TxnPool;
 
     my $pool = txn_item {
-        # $_ consists the one item
-        # code has dbh & sth handle statements
-        # It's executed for every item inside one transaction maximum of size 'size'
-        # this code may be recalled if deadlocks will occur
+        my ( $pool, $item ) = @_;
+
+        $pool->dbh->do( "UPDATE table SET val=? WHERE key=?", undef, $_->{val}, $_->{key} );
+        # or
+        $dbh->do("INSERT INTO table SET val=?, key=?", undef, $_->{val}, $_->{key} );
     }
     txn_post_item {
-        # $_ consists the one item
-        # code executed for every item after sucessfully commited transaction
+        my ( $pool, $item ) = @_;
+
+        # Here we are if transaction is successful
+        unlink( 'some_file_' . $_->{key} );
+        # or
+        unlink( 'some_file_' . $item->{key} );
+    }
+    txn_commit {
+        my $pool = shift;
+        log( 'The commit was here...' );
     } dbh => $dbh, size => 100;
 
-    foreach my $i ( 0 .. 1000 ) {
-        $pool->add( { i => $i, value => 'test' . $i } );
-    }
+    # Here can be deadlocks but they will be resolved by module and repeated (see example in xt/03_deadlock_solution.t)
+    $pool->add( { key => int( rand(100) ), val => $_ } ) for ( 0 .. 300 );
+    $pool->finish;
 
+Or other way:
+
+    my $pool = txn_item {
+        $dbh->do( "UPDATE table SET val=? WHERE key=?", undef, $_->{val}, $_->{key} );
+    }
+    txn_sort {
+        $a->{key} <=> $b->{key}
+    }
+    dbh => $dbh, size => 100;
+
+    # Here will not be deadlocks because all keys are sorted before transaction and this example is sinple (see example in xt/04_deadlock_sort_solution.t)
+    # But module will resolve deadlocks in other difficult cases
+    $pool->add( { key => int( rand(100) ), val => $_ } ) for ( 0 .. 300 );
     $pool->finish;
 
 =head1 DESCRIPTION
@@ -207,40 +254,7 @@ deleting files, cleanups and etc.
 
 =head1 CONSTRUCTOR
 
-The object DBIx::TxnPool created by txn_item subroutines:
-
-    my $pool = txn_item {
-        my ( $pool, $item ) = @_;
-        # $_ consists the item too
-
-        # It's executed for every item inside one transaction maximum of size 'size'
-        # this code may be recalled if deadlocks will occur
-
-        # code has dbh & sth handle statements
-        $pool->dbh->do("UPDATE ...");
-        $pool->dbh->do("INSERT ...");
-        $pool->dbh->do("DELETE...");
-    }
-    txn_post_item {
-        my ( $pool, $item ) = @_;
-        # $_ consists the item too
-        # code executed for every item after sucessfully commited transaction
-        unlink('some_file);
-    }
-    txn_commit {
-        my $pool = shift;
-        # we log here each transaction for example
-        log( 'The commit was here...' );
-    } dbh => $dbh, size => 100;
-
-Or other way:
-
-    my $pool = txn_item {
-        # $_ consists the one item
-        # code has dbh & sth handle statements
-        # It's executed for every item inside one transaction maximum of size 'size'
-        # this code may be recalled if deadlocks will occur
-    } dbh => $dbh, size => 100;
+Please to see L</SYNOPSIS> section
 
 =head2 Shortcuts:
 
@@ -255,6 +269,14 @@ The transaction's item callback. Here should be SQL statements and code should
 be safe for repeating (when a deadlock occurs). The C<$_> consists a current item.
 You can modify it if one is hashref for example. Passing arguments will be
 I<DBIx::TxnPool> object and I<current item> respectively.
+
+=item txn_sort B<(Optional)>
+
+Here you can define sort function for your data before transaction will be made.
+If you have only one type SQL statement in L</txn_item> but have not sorted keys
+before transaction you can occur deadlocks (they will be resolved and
+transaction will be repeated of course but you will lose a processing time)
+unless you define this function. This method minimize deadlock events.
 
 =item txn_post_item B<(Optional)>
 

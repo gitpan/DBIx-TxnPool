@@ -19,5 +19,6 @@ t/00_use.t
 xt/00_mysql_connect.t
 xt/01_deadlock_demonstration.t
 xt/02_deadlock_solution.t
-xt/03_deadlock_solution_2.t
+xt/03_deadlock_solution.t
+xt/04_deadlock_sort_solution.t
 xt/connect.pm
