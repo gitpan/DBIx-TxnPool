@@ -21,8 +21,9 @@ no_index:
     - xt
 requires:
   Carp: 0
+  Signal::Mask: 0
   Try::Tiny: 0
 resources:
   license: http://dev.perl.org/licenses/
   repository: git://github.com/Perlover/DBIx-TxnPool.git
-version: 0.08
+version: 0.09

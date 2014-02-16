@@ -5,9 +5,11 @@ use warnings;
 use Exporter 5.57 qw( import );
 
 use Try::Tiny;
+use Signal::Mask;
 use Carp qw( confess croak );
 
-our $VERSION = 0.08;
+our $VERSION = 0.09;
+our $BlockSignals = [ qw( TERM INT ) ];
 our @EXPORT = qw( txn_item txn_post_item txn_commit txn_sort );
 
 # It's better to look for the "try restarting transaction" string
@@ -21,7 +23,10 @@ sub new {
       unless $args{dbh};
 
     $args{size}                   ||= 100;
+    $args{block_signals}          ||= $BlockSignals;
     $args{max_repeated_deadlocks} ||= 5;
+    $args{_amnt_nested_signals}   = 0;
+    $args{_saved_signal_masks}    = {};
     $args{pool}                   = [];
     $args{amount_deadlocks}       = 0;
 
@@ -65,14 +70,16 @@ sub add {
     my ( $self, $data ) = @_;
 
     $self->{repeated_deadlocks} = 0;
+
     try {
         push @{ $self->{pool} }, $data;
 
         if ( ! $self->{sort_callback} ) {
             $self->start_txn;
-
-            local $_ = $data;
-            $self->{item_callback}->( $self, $data );
+            $self->_safe_signals( sub {
+                local $_ = $data;
+                $self->{item_callback}->( $self, $data );
+            } );
         }
     }
     catch {
@@ -105,12 +112,17 @@ sub play_pool {
     my $self = shift;
 
     $self->start_txn;
-    select( undef, undef, undef, 0.5 * ++$self->{repeated_deadlocks} );
+
+    $self->_safe_signals( sub {
+        select( undef, undef, undef, 0.5 * ++$self->{repeated_deadlocks} );
+    } );
 
     try {
         foreach my $data ( @{ $self->{pool} } ) {
-            local $_ = $data;
-            $self->{item_callback}->( $self, $data );
+            $self->_safe_signals( sub {
+                local $_ = $data;
+                $self->{item_callback}->( $self, $data );
+            } );
         }
     }
     catch {
@@ -153,8 +165,10 @@ sub start_txn {
     my $self = shift;
 
     if ( ! $self->{in_txn} ) {
-        $self->{dbh}->begin_work or die $self->{dbh}->errstr;
-        $self->{in_txn} = 1;
+        $self->_safe_signals( sub {
+            $self->{dbh}->begin_work or die $self->{dbh}->errstr;
+            $self->{in_txn} = 1;
+        } );
     }
 }
 
@@ -162,8 +176,10 @@ sub rollback_txn {
     my $self = shift;
 
     if ( $self->{in_txn} ) {
-        $self->{dbh}->rollback or die $self->{dbh}->errstr;
-        $self->{in_txn} = undef;
+        $self->_safe_signals( sub {
+            $self->{dbh}->rollback or die $self->{dbh}->errstr;
+            $self->{in_txn} = undef;
+        } );
     }
 }
 
@@ -171,14 +187,40 @@ sub commit_txn {
     my $self = shift;
 
     if ( $self->{in_txn} ) {
-        $self->{dbh}->commit or die $self->{dbh}->errstr;
+        $self->_safe_signals( sub {
+            $self->{dbh}->commit or die $self->{dbh}->errstr;
+            $self->{in_txn} = undef;
+        } );
         $self->{commit_callback}->( $self )
           if exists $self->{commit_callback};
-        $self->{in_txn} = undef;
     }
 }
 
 sub amount_deadlocks { $_[0]->{amount_deadlocks} }
+
+sub _safe_signals {
+    my ( $self, $code ) = @_;
+
+    if ( ! $self->{_amnt_nested_signals}++ ) {
+        for ( @{ $self->{block_signals} } ) {
+            $self->{_saved_signal_masks}{ $_ } = $Signal::Mask{ $_ };
+            $Signal::Mask{ $_ } = 1;
+        }
+    }
+    try {
+        $code->();
+    }
+    catch {
+        die $_;
+    }
+    finally {
+        if ( ! --$self->{_amnt_nested_signals} ) {
+            for ( @{ $self->{block_signals} } ) {
+                $Signal::Mask{ $_ } = delete $self->{_saved_signal_masks}{ $_ };
+            }
+        }
+    };
+}
 
 1;
 
@@ -304,6 +346,13 @@ The dbh to be needed for begin_work & commit method (wrap in a transaction).
 
 The size of pool when a commit method will be called when feeding reaches the same size.
 
+=item block_signals B<(Optional)>
+
+An arrayref of signals (strings) which should be blocked in slippery places for
+this I<pool>. Defaults are [ qw( TERM INT ) ]. You can change globaly this list
+by setting: C<< $DBIx::TxnPool::BlockSignals = [ qw( TERM INT ALARM ... ) ] >>.
+For details to see here L</"SIGNAL HANDLING">
+
 =item max_repeated_deadlocks B<(Optional)>
 
 The limit of consecutive deadlocks. The default is 5. After limit to be reached
@@ -335,6 +384,27 @@ It makes a final transaction if pool is not empty.
 The amount of deadlocks (repeated transactions)
 
 =back
+
+=head1 SIGNAL HANDLING
+
+In DBD::mysql and may be in other DB drivers there is a some bad behavior - the
+bug i think. If a some signal will arrive (TERM, INT and other) in your program
+during a some SQL socket work this driver throws an exception like "MySQL lost
+connection". It happens because the C<recv> or C<read> system calls into MySQL
+driver return with error code C<EINTR> if signal arrives inside this system
+call. A right written software should recall system call again because C<EINTR>
+is not fatal error. But i think MySQL driver decides this error as I<lost
+connection error>. I<"Deferred Signals"> (or L<Safe
+Signals|perlipc/"Deferred Signals (Safe Signals)">) of perl don't help because
+the MySQL driver uses direct system calls.
+
+Workaround is to use L<Signal::Mask> module for example and to block these
+signals (TERM / INT) during working with DBI subroutines. The version 0.09 of
+C<DBIx::TxnPool> has helpers for this. The C<DBIx::TxnPool> wraps all slippery
+places by blocking your preferred signals (defaults are C<TERM> & C<INT> ones)
+before entering and by unblocking after (for example the callback handler
+L</txn_item> and transaction code). This should minimize raised errors like the
+"MySQL lost connection".
 
 =head1 AUTHOR
 

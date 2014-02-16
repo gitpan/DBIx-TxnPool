@@ -21,4 +21,5 @@ xt/01_deadlock_demonstration.t
 xt/02_deadlock_solution.t
 xt/03_deadlock_solution.t
 xt/04_deadlock_sort_solution.t
+xt/05_block_signal.t
 xt/connect.pm

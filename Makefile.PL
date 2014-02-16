@@ -11,6 +11,7 @@ license 'perl';
 version_from 'lib/DBIx/TxnPool.pm';
 
 requires 'Try::Tiny';
+requires 'Signal::Mask';
 requires 'Carp';
 
 auto_set_repository;

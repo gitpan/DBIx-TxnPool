@@ -108,6 +108,13 @@ CONSTRUCTOR
         The size of pool when a commit method will be called when feeding
         reaches the same size.
 
+    block_signals (Optional)
+        An arrayref of signals (strings) which should be blocked in slippery
+        places for this *pool*. Defaults are [ qw( TERM INT ) ]. You can
+        change globaly this list by setting: "$DBIx::TxnPool::BlockSignals =
+        [ qw( TERM INT ALARM ... ) ]". For details to see here "SIGNAL
+        HANDLING"
+
     max_repeated_deadlocks (Optional)
         The limit of consecutive deadlocks. The default is 5. After limit to
         be reached the "add" throws exception.
@@ -125,6 +132,26 @@ METHODS
 
     amount_deadlocks
         The amount of deadlocks (repeated transactions)
+
+SIGNAL HANDLING
+    In DBD::mysql and may be in other DB drivers there is a some bad
+    behavior - the bug i think. If a some signal will arrive (TERM, INT and
+    other) in your program during a some SQL socket work this driver throws
+    an exception like "MySQL lost connection". It happens because the "recv"
+    or "read" system calls into MySQL driver return with error code "EINTR"
+    if signal arrives inside this system call. A right written software
+    should recall system call again because "EINTR" is not fatal error. But
+    i think MySQL driver decides this error as *lost connection error*.
+    *"Deferred Signals"* (or Safe Signals) of perl don't help because the
+    MySQL driver uses direct system calls.
+
+    Workaround is to use Signal::Mask module for example and to block these
+    signals (TERM / INT) during working with DBI subroutines. The version
+    0.09 of "DBIx::TxnPool" has helpers for this. The "DBIx::TxnPool" wraps
+    all slippery places by blocking your preferred signals (defaults are
+    "TERM" & "INT" ones) before entering and by unblocking after (for
+    example the callback handler "txn_item" and transaction code). This
+    should minimize raised errors like the "MySQL lost connection".
 
 AUTHOR
     This module has been written by Perlover <perlover@perlover.com>

@@ -1,5 +1,9 @@
 Revision history for perl module DBIx::TxnPool
 
+0.09 2014-02-16
+    - Added the signal blocking for minimizing "MySQL lost connection" errors.
+    - Added test for the signal blocking
+
 0.08 2013-12-09
     - Added 'txn_sort' shortcut for sorting method of data before transaction.
       It will reduce deadlock events. Added test for this (author's tests in xt/*).
