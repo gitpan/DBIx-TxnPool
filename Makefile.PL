@@ -4,7 +4,7 @@ use warnings;
 use inc::Module::Install;
 
 name 'DBIx-TxnPool';
-abstract 'The helper for making SQL insert/delete/update statements through a transaction method with a deadlock solution';
+abstract 'Massive SQL updates by means of transactions with the deadlock & signal solution';
 
 author 'Perlover <perlover@perlover.com>';
 license 'perl';
@@ -13,6 +13,7 @@ version_from 'lib/DBIx/TxnPool.pm';
 requires 'Try::Tiny';
 requires 'Signal::Mask';
 requires 'Carp';
+requires 'Exporter'      => 5.57;
 
 auto_set_repository;
 author_tests('xt');

@@ -8,7 +8,7 @@ use Try::Tiny;
 use Signal::Mask;
 use Carp qw( confess croak );
 
-our $VERSION = 0.09;
+our $VERSION = 0.10;
 our $BlockSignals = [ qw( TERM INT ) ];
 our @EXPORT = qw( txn_item txn_post_item txn_commit txn_sort );
 
@@ -71,6 +71,9 @@ sub add {
 
     $self->{repeated_deadlocks} = 0;
 
+    die "assert: _amnt_nested_signals is not zero!"
+      if $self->{_amnt_nested_signals};
+
     try {
         push @{ $self->{pool} }, $data;
 
@@ -88,6 +91,9 @@ sub add {
 
     $self->finish
       if ( @{ $self->{pool} } >= $self->{size} );
+
+    die "assert: _amnt_nested_signals is not zero!"
+      if $self->{_amnt_nested_signals};
 }
 
 sub _check_deadlock {
@@ -95,17 +101,19 @@ sub _check_deadlock {
 
     $self->rollback_txn;
 
-    $error =~ DEADLOCK_REGEXP
-    ?
-        (
-            $self->{amount_deadlocks}++, $self->{repeated_deadlocks} >= $self->{max_repeated_deadlocks}
-            ?
-                confess( "limit ($self->{repeated_deadlocks}) of deadlock resolvings" )
-            :
-                $self->play_pool
-        )
-    :
+    if ( $error =~ DEADLOCK_REGEXP ) {
+        $self->{amount_deadlocks}++;
+        if ( $self->{repeated_deadlocks} >= $self->{max_repeated_deadlocks} ) {
+            confess( "limit ($self->{repeated_deadlocks}) of deadlock resolvings" )
+        }
+        else {
+            $self->play_pool
+        }
+    } else {
+        # Fatal error - may be bad SQL statement - finish
+        $self->{pool} = []; # If DESTROY calls finish() there will not problems
         confess( "error in item callback ($error)" );
+    }
 }
 
 sub play_pool {
@@ -133,6 +141,9 @@ sub play_pool {
 sub finish {
     my $self = shift;
 
+    die "assert: _amnt_nested_signals is not zero!"
+      if $self->{_amnt_nested_signals};
+
     if ( $self->{sort_callback} && @{ $self->{pool} } ) {
         no strict 'refs';
         local *a = *{"$self->{sort_callback_package}\::a"};
@@ -159,6 +170,9 @@ sub finish {
     }
 
     $self->{pool} = [];
+
+    die "assert: _amnt_nested_signals is not zero!"
+      if $self->{_amnt_nested_signals};
 }
 
 sub start_txn {
@@ -230,7 +244,7 @@ __END__
 
 =head1 NAME
 
-DBIx::TxnPool - Auto resolver of MySQL InnoDB deadlocks and transaction wrapper for DML statements
+DBIx::TxnPool - Massive SQL updates by means of transactions with the deadlock & signal solution
 
 =head1 SYNOPSIS
 
@@ -258,7 +272,8 @@ This module will help to you to make quickly DML statements of InnoDB engine. Yo
         log( 'The commit was here...' );
     } dbh => $dbh, size => 100;
 
-    # Here can be deadlocks but they will be resolved by module and repeated (see example in xt/03_deadlock_solution.t)
+    # Here can be deadlocks but they will be resolved by module
+    # and repeated (to see example in xt/03_deadlock_solution.t)
     $pool->add( { key => int( rand(100) ), val => $_ } ) for ( 0 .. 300 );
     $pool->finish;
 
@@ -272,27 +287,32 @@ Or other way:
     }
     dbh => $dbh, size => 100;
 
-    # Here will not be deadlocks because all keys are sorted before transaction and this example is sinple (see example in xt/04_deadlock_sort_solution.t)
-    # But module will resolve deadlocks in other difficult cases
+    # Here no deadlocks because all keys are sorted before transaction:
+    # circle blocks inside the InnoDB not occur
     $pool->add( { key => int( rand(100) ), val => $_ } ) for ( 0 .. 300 );
     $pool->finish;
 
 =head1 DESCRIPTION
 
-Sometimes i need in module which helps to me to wrap some SQL manipulation
-statements to one transaction. If you make alone insert/delete/update statement
-in the InnoDB engine, MySQL server for example does fsync (data flushing to disk) after
-each statements. It can be very slowly if you update 100,000 and more rows for
-example. The better way to wrap some insert/delete/update statements in one
-transaction for example. But there can be other problem - deadlocks. If a
-deadlock occur the DBI's module can throws exceptions and ideal way to repeat SQL
-statements again. This module helps to make it. It has a pool inside for data (FIFO
-buffer) and calls your callbacks for each pushed item. When you feed a module by
-your data, it wraps data in one transaction up to the maximum defined size or up to
-the finish method. If deadlock occurs it repeats your callbacks for every item again.
-You can define a second callback which will be executed for every item after
-wrapped transaction. For example there can be non-SQL statements, for example a
-deleting files, cleanups and etc.
+If you need massive quickly updates or inserts into InnoDB database - this
+module for you! It helps to wrap some SQL manipulation statements to one
+transaction and has the deadlock and signal solution.
+
+=head1 DETAILS
+
+If you make alone insert/delete/update statement in the InnoDB engine, MySQL
+server does fsync (data flushing to disk) after each statement. It can be very
+slow for many updates. The best solution can be to wrap some
+insert/delete/update statements in one transaction for example. But this raises
+a new problem - deadlocks. If a deadlock occurs a DBI module throws exceptions
+and ideal way to repeat SQL statements again. This module helps to make it. It
+has a pool inside for data (FIFO buffer) and calls your callbacks for each
+pushed item. When your pool to be fed by your data, it wraps data in one
+transaction up to the maximum defined size or up to the finish method. If
+deadlock occurs a pool repeats your callbacks for every item again. You can
+define a second callback which will be executed for every item after wrapped
+transaction. For example there can be non-SQL statements, for example a deleting
+files, cleanups and etc.
 
 =head1 CONSTRUCTOR
 
@@ -307,30 +327,31 @@ Parameters should be the last.
 
 =item txn_item B<(Required)>
 
-The transaction's item callback. Here should be SQL statements and code should
-be safe for repeating (when a deadlock occurs). The C<$_> consists a current item.
+The transaction item callback. There should be SQL statements and code should be
+safe for repeating (when a deadlock occurs). The C<$_> consists a current item.
 You can modify it if one is hashref for example. Passing arguments will be
 I<DBIx::TxnPool> object and I<current item> respectively.
 
 =item txn_sort B<(Optional)>
 
-Here you can define sort function for your data before transaction will be made.
-If you have only one type SQL statement in L</txn_item> but have not sorted keys
-before transaction you can occur deadlocks (they will be resolved and
-transaction will be repeated of course but you will lose a processing time)
-unless you define this function. This method minimize deadlock events.
+Here you can define sort function for your data before a transaction will be
+made. If you have only one type SQL statement in L<txn_item|/"txn_item
+(Required)"> but you didn't sort keys before transaction you can have deadlocks
+(they will be resolved and transaction will be repeated but you will lose a
+processing time) unless you define this function. This method minimize deadlock
+events!
 
 =item txn_post_item B<(Optional)>
 
 The post transaction item callback. This code will be executed once for each
 item (defined in C<$_>). It is located outside of the transaction. And it will
-be called if whole transaction was succaessful. Passing arguments will be
+be called if whole transaction was successful. Passing arguments are
 I<DBIx::TxnPool> object and I<current item> respectively.
 
 =item txn_commit B<(Optional)>
 
 This callback will be called after each SQL commit statement. Here you can put
-code for logging for example. The first argument will be I<DBIx::TxnPool> object
+code for logging for example. The first argument is I<DBIx::TxnPool> object
 
 =back
 
@@ -387,14 +408,14 @@ The amount of deadlocks (repeated transactions)
 
 =head1 SIGNAL HANDLING
 
-In DBD::mysql and may be in other DB drivers there is a some bad behavior - the
-bug i think. If a some signal will arrive (TERM, INT and other) in your program
-during a some SQL socket work this driver throws an exception like "MySQL lost
-connection". It happens because the C<recv> or C<read> system calls into MySQL
-driver return with error code C<EINTR> if signal arrives inside this system
-call. A right written software should recall system call again because C<EINTR>
-is not fatal error. But i think MySQL driver decides this error as I<lost
-connection error>. I<"Deferred Signals"> (or L<Safe
+In DBD::mysql and may be in other DB drivers there is a some bad behavior the
+bug as i think. If a some signal will arrive (TERM, INT and other) in your
+program during a some SQL socket work this driver throws an exception like
+"MySQL lost connection". It happens because the C<recv> or C<read> system calls
+into MySQL driver return with error code C<EINTR> if signal arrives inside this
+system call. A right written software should recall a system call again because
+the C<EINTR> is not fatal error. But i think MySQL driver decides this error as
+I<lost connection error>. I<"Deferred Signals"> (or L<Safe
 Signals|perlipc/"Deferred Signals (Safe Signals)">) of perl don't help because
 the MySQL driver uses direct system calls.
 
@@ -403,8 +424,8 @@ signals (TERM / INT) during working with DBI subroutines. The version 0.09 of
 C<DBIx::TxnPool> has helpers for this. The C<DBIx::TxnPool> wraps all slippery
 places by blocking your preferred signals (defaults are C<TERM> & C<INT> ones)
 before entering and by unblocking after (for example the callback handler
-L</txn_item> and transaction code). This should minimize raised errors like the
-"MySQL lost connection".
+L<txn_item|/"txn_item (Required)"> and transaction code). This should minimize
+raised errors like the "MySQL lost connection".
 
 =head1 AUTHOR
 
@@ -424,8 +445,6 @@ L<DBI>, L<Deadlock Detection and Rollback|http://dev.mysql.com/doc/refman/5.5/en
 =over
 
 =item A supporting DBIx::Connector object instead DBI
-
-=item To add other callbacks in future.
 
 =back
 

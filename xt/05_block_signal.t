@@ -9,6 +9,7 @@ BEGIN { $Test::MultiFork::inactivity = 120 }
 use Test::MultiFork;
 use Test::More;
 use Test::Exception;
+use Signal::Mask;
 
 use constant    AMOUNT_TESTS => 20;
 
@@ -74,6 +75,7 @@ b:
     @data = ( { b => 2, a => 2 }, { b => 2, a => 1 } );
 
 ab:
+    ok ! $Signal::Mask{TERM};
     lives_ok {
         for ( my $i = 0; $i < AMOUNT_TESTS; $i++ ) {
             foreach my $item ( @data ) {
@@ -82,10 +84,33 @@ ab:
             $pool->finish;
         }
     };
+    ok ! $Signal::Mask{TERM};
 
 ab:
     ok( $commit_callbacks == AMOUNT_TESTS );
-    diag "pid $$, caught number TERM signals: $amount_TERM_signals";
+    # diag "pid $$, caught number TERM signals: $amount_TERM_signals";
     ok $amount_TERM_signals > 0;
+    
+    $amount_TERM_signals = 0;
+    
+ab:
+    {
+        local $Signal::Mask{TERM} = 1;
+
+        ok $Signal::Mask{TERM};
+        lives_ok {
+            for ( my $i = 0; $i < AMOUNT_TESTS; $i++ ) {
+                foreach my $item ( @data ) {
+                    $pool->add( $item );
+                    ok $Signal::Mask{TERM};
+                }
+                $pool->finish;
+            }
+        };
+        ok $Signal::Mask{TERM};
+        ok $amount_TERM_signals == 0;
+    }
+    
+    ok $amount_TERM_signals == 1;
 
     done_testing;
